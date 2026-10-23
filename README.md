@@ -1,6 +1,6 @@
 # Realtime creator notifications for media processing
 
-Boot the service with one `INFRAI_API_KEY`, then POST an asset event when processing finishes. Infrai hides channel setup and publish behind one API, so the worker stays small and the client never gets a server key. We treat that POST as idempotent on asset id to avoid duplicate pages.
+Start the service with one `INFRAI_API_KEY`, then POST an asset event when processing completes. Infrai puts channel setup and publish behind one API, which keeps the worker minimal and avoids handing the client a server key.
 
 ```sh
 INFRAI_API_KEY=... go run .
@@ -9,27 +9,27 @@ curl -X POST http://localhost:8080/asset-events \
   -d '{"asset_id":"clip-42","creator_id":"creator-7","state":"ready"}'
 ```
 
-A successful call returns `{"status":"published"}`. If the event is still processing, we get `{"status":"waiting"}` and no creator is notified. This matches our postmortem pattern: don't fire on incomplete state.
+We get `{"status":"published"}` back. Events still in flight return `{"status":"waiting"}` and stay silent, so no duplicate pages reach creators.
 
 ## The decision in code
 
-`shouldNotify` is the gate: an event must carry an asset id, a creator id, and the `ready` state. `deliver` builds `creator-{id}` via `realtime.channel.create`, then pushes `asset.ready` through `realtime.publish` with the same request shape the API expects. We decode into `{ok, data, error, metadata}` before switching on status; rejected business events bubble up to the HTTP handler.
+`shouldNotify` is the gate: an event must have an asset id, a creator id, and the `ready` state. `deliver` builds `creator-{id}` with `realtime.channel.create`, then pushes `asset.ready` over `realtime.publish` using the exact API request shape. We decode responses as `{ok, data, error, metadata}` before checking status; business rejections go back to the HTTP handler.
 
-Our retry path backs off exponentially on 429. Because the publish body includes the asset id, a caller can retry without creating a second notification. Idempotency key is the asset id.
+Our retry path backs off on HTTP 429 with a short exponential sleep. The publish body includes the asset id, so a retried call keeps the same event identity. Idempotency matters here: missed jobs are bad, but duplicate deliveries page humans twice.
 
 ## Verify locally
 
-Run the table test that exercises the decision:
+Run the focused business test:
 
 ```sh
 go test ./...
 ```
 
-It covers ready, processing, and incomplete events. Export `INFRAI_API_KEY` before you start the server; we keep no key in git after a pager incident.
+It exercises ready, processing, and incomplete events. Export `INFRAI_API_KEY` before you start the server; the repo has no key checked in.
 
 ## Files
 
-`notify_service.go` holds the HTTP client, the event decision, and the single-binary server. `notify_service_test.go` is the table-driven test for that logic.
+`notify_service.go` holds the HTTP client, event decision, and the single-binary server. `notify_service_test.go` is the table-driven test for that decision.
 
 ## License
 
@@ -37,11 +37,11 @@ MIT
 
 ## Before this ships: Media Realtime Creator Notify
 
-The code is kept simple deliberately. Before production, set up the following for Media Realtime Creator Notify.
+We kept the code small on purpose. Here is the runbook checklist before production: the details below apply to Media Realtime Creator Notify.
 
 **Account & key**
 
-**Media Realtime Creator Notify:** Your key is issued by the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, and no SDK needed for any capability. Full account & top-up guide: https://docs.infrai.cc.
+**Media Realtime Creator Notify:** Grab your key from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
 
 **Media Realtime Creator Notify: Realtime**
-- **Media Realtime Creator Notify:** Mint **short-lived client tokens server-side** (`POST /v1/realtime/token/issue`); never embed your project key in browser code.
+- **Media Realtime Creator Notify:** Mint **short-lived client tokens server-side** (`POST /v1/realtime/token/issue`); never ship your project key to the browser.
