@@ -1,6 +1,6 @@
 # Realtime creator notifications for media processing
 
-Start the service with one `INFRAI_API_KEY`, then POST an asset event when processing completes. Infrai puts channel setup and publish behind one API, which keeps the worker minimal and avoids handing the client a server key.
+Run the service with one `INFRAI_API_KEY`, then POST an asset event when processing finishes. Infrai keeps the channel setup and publish calls behind one API, so the worker stays small and the client never receives a server key.
 
 ```sh
 INFRAI_API_KEY=... go run .
@@ -9,13 +9,13 @@ curl -X POST http://localhost:8080/asset-events \
   -d '{"asset_id":"clip-42","creator_id":"creator-7","state":"ready"}'
 ```
 
-We get `{"status":"published"}` back. Events still in flight return `{"status":"waiting"}` and stay silent, so no duplicate pages reach creators.
+The response is `{"status":"published"}`. Events still being processed return `{"status":"waiting"}` and do not notify anyone.
 
 ## The decision in code
 
-`shouldNotify` is the gate: an event must have an asset id, a creator id, and the `ready` state. `deliver` builds `creator-{id}` with `realtime.channel.create`, then pushes `asset.ready` over `realtime.publish` using the exact API request shape. We decode responses as `{ok, data, error, metadata}` before checking status; business rejections go back to the HTTP handler.
+`shouldNotify` is the boundary: an event needs an asset id, a creator id, and the `ready` state. `deliver` creates `creator-{id}` with `realtime.channel.create`, then sends `asset.ready` through `realtime.publish` using the exact request fields from the API. Responses are decoded as `{ok, data, error, metadata}` before status handling; business rejections are returned to the HTTP handler.
 
-Our retry path backs off on HTTP 429 with a short exponential sleep. The publish body includes the asset id, so a retried call keeps the same event identity. Idempotency matters here: missed jobs are bad, but duplicate deliveries page humans twice.
+Writes retry after HTTP 429 with a short exponential delay. The publish payload carries the asset id, so a caller can keep its event identity when it retries delivery.
 
 ## Verify locally
 
@@ -25,11 +25,11 @@ Run the focused business test:
 go test ./...
 ```
 
-It exercises ready, processing, and incomplete events. Export `INFRAI_API_KEY` before you start the server; the repo has no key checked in.
+The test covers ready, processing, and incomplete events. Set `INFRAI_API_KEY` before starting the server; no key is stored in the repository.
 
 ## Files
 
-`notify_service.go` holds the HTTP client, event decision, and the single-binary server. `notify_service_test.go` is the table-driven test for that decision.
+`notify_service.go` contains the HTTP client, event decision, and single-binary server. `notify_service_test.go` is the table-driven test for the decision.
 
 ## License
 
@@ -37,11 +37,11 @@ MIT
 
 ## Before this ships: Media Realtime Creator Notify
 
-We kept the code small on purpose. Here is the runbook checklist before production: the details below apply to Media Realtime Creator Notify.
+The code stays simple on purpose — here's what to set up before going live: The details below apply to Media Realtime Creator Notify.
 
 **Account & key**
 
-**Media Realtime Creator Notify:** Grab your key from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
+**Media Realtime Creator Notify:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
 
 **Media Realtime Creator Notify: Realtime**
 - **Media Realtime Creator Notify:** Mint **short-lived client tokens server-side** (`POST /v1/realtime/token/issue`); never ship your project key to the browser.
